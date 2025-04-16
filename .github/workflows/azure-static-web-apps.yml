@@ -1,0 +1,56 @@
+name: Azure Static Web Apps CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+
+jobs:
+  build_and_deploy_job:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+    runs-on: ubuntu-latest
+    name: Build and Deploy Job
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+      - name: Build And Deploy
+        id: builddeploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          app_location: "/" # App source code path
+          api_location: "api" # Api source code path - optional
+          output_location: "dist" # Built app content directory - optional
+          app_build_command: "npm run build"
+        env:
+          VITE_STORAGE_ACCOUNT: ${{ secrets.VITE_STORAGE_ACCOUNT }}
+          VITE_STORAGE_SAS: ${{ secrets.VITE_STORAGE_SAS }}
+          VITE_STORAGE_CONTAINER: ${{ secrets.VITE_STORAGE_CONTAINER }}
+          VITE_COSMOS_ENDPOINT: ${{ secrets.VITE_COSMOS_ENDPOINT }}
+          VITE_COSMOS_KEY: ${{ secrets.VITE_COSMOS_KEY }}
+          VITE_COSMOS_DATABASE: ${{ secrets.VITE_COSMOS_DATABASE }}
+          VITE_COSMOS_CONTAINER: ${{ secrets.VITE_COSMOS_CONTAINER }}
+          VITE_LOGIC_APP_CREATE_URL: ${{ secrets.VITE_LOGIC_APP_CREATE_URL }}
+          VITE_LOGIC_APP_GET_ALL_URL: ${{ secrets.VITE_LOGIC_APP_GET_ALL_URL }}
+          VITE_LOGIC_APP_GET_ONE_URL: ${{ secrets.VITE_LOGIC_APP_GET_ONE_URL }}
+          VITE_LOGIC_APP_UPDATE_URL: ${{ secrets.VITE_LOGIC_APP_UPDATE_URL }}
+          VITE_LOGIC_APP_DELETE_URL: ${{ secrets.VITE_LOGIC_APP_DELETE_URL }}
+          VITE_APP_INSIGHTS_KEY: ${{ secrets.VITE_APP_INSIGHTS_KEY }}
+
+  close_pull_request_job:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    name: Close Pull Request Job
+    steps:
+      - name: Close Pull Request
+        id: closepullrequest
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: "close"

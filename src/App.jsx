@@ -1,128 +1,523 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import './App.css'
-import { AiFillDelete } from 'react-icons/ai';  // import the delete icon
-import { FaFileUpload } from 'react-icons/fa';  // import the delete icon
-import Placeholder from './assets/placeholder.jpeg'  // import the placeholder image
-import Loading from './components/Loading';  // import the loading component
-import { BlobServiceClient } from '@azure/storage-blob';
+import { AiFillDelete, AiFillEdit, AiFillInfoCircle } from 'react-icons/ai'
+import { FaFileUpload } from 'react-icons/fa'
+import { toast, ToastContainer } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
+import Placeholder from './assets/placeholder.jpeg'
+import Loading from './components/Loading'
+import { BlobServiceClient } from '@azure/storage-blob'
+import { ApplicationInsights } from '@microsoft/applicationinsights-web'
+
+// Initialize Application Insights
+const appInsights = new ApplicationInsights({
+  config: {
+    connectionString: import.meta.env.VITE_APPINSIGHTS_CONNECTION_STRING,
+    enableAutoRouteTracking: true,
+  }
+})
+appInsights.loadAppInsights()
+appInsights.trackPageView()
 
 const App = () => {
-  const [file, setFile] = useState(null);
-  const [imageUrls, setImageUrls] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [file, setFile] = useState(null)
+  const [imageUrls, setImageUrls] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [imageTitle, setImageTitle] = useState('')
+  const [imageDescription, setImageDescription] = useState('')
+  const [tags, setTags] = useState('')
+  const [error, setError] = useState(null)
+  const [selectedImage, setSelectedImage] = useState(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [stats, setStats] = useState({ total: 0, totalSize: 0 })
 
-  //Storage account credentials
-  const account = import.meta.env.VITE_STORAGE_ACCOUNT  // get the storage account name from the .env file
-  const sasToken = import.meta.env.VITE_STORAGE_SAS  // get the SAS token from the .env file
-  const containerName = import.meta.env.VITE_STORAGE_CONTAINER  // get the container name from the .env file
-  const blobServiceClient = new BlobServiceClient(`https://${account}.blob.core.windows.net/?${sasToken}`);  // create a blobServiceClient
-  const containerClient = blobServiceClient.getContainerClient(containerName);  // create a containerClient
+  // Storage account credentials
+  const account = import.meta.env.VITE_STORAGE_ACCOUNT
+  const sasToken = import.meta.env.VITE_STORAGE_SAS
+  const containerName = import.meta.env.VITE_STORAGE_CONTAINER
+  const logicAppUrl = import.meta.env.VITE_LOGIC_APP_URL
+  
+  // Azure clients
+  const blobServiceClient = new BlobServiceClient(`https://${account}.blob.core.windows.net/?${sasToken}`)
+  const containerClient = blobServiceClient.getContainerClient(containerName)
 
-  //fetch all images
-  const fetchImages = async () => {
-    if (!account || !sasToken || !containerName) {  // check if the credentials are set
-      alert('Please make sure you have set the Azure Storage credentials in the .env file');
-      return;
+  // Fetch all images - memoized with useCallback
+  const fetchImages = useCallback(async () => {
+    if (!account || !sasToken || !containerName) {
+      toast.error('Azure Storage credentials missing in environment variables')
+      return
     }
+    
     try {
-      setLoading(true); // Turn on loading
-      const blobItems = containerClient.listBlobsFlat();  // get all blobs in the container     
-      const urls = [];
-      for await (const blob of blobItems) {
-        const tempBlockBlobClient = containerClient.getBlockBlobClient(blob.name);  // get the blob url
-        urls.push({ name: blob.name, url: tempBlockBlobClient.url });  // push the image name and url to the urls array
+      setLoading(true)
+      setError(null)
+      
+      // Track performance with App Insights
+      const fetchStart = Date.now()
+      appInsights.trackEvent({ name: "FetchImagesStarted" })
+      
+      // Get images from Cosmos DB via Logic App
+      const metadataResponse = await fetch(`${logicAppUrl}/getall`)
+      
+      if (metadataResponse.ok) {
+        const metadataList = await metadataResponse.json()
+        
+        // Also get images from Blob Storage for full details
+        const blobItems = containerClient.listBlobsFlat()
+        const blobsMap = new Map()
+        
+        for await (const blob of blobItems) {
+          const tempBlockBlobClient = containerClient.getBlockBlobClient(blob.name)
+          blobsMap.set(blob.name, { 
+            name: blob.name, 
+            url: tempBlockBlobClient.url,
+            metadata: blob.metadata || {},
+            properties: blob.properties
+          })
+        }
+        
+        // Merge metadata from Cosmos DB with Blob information
+        const urls = metadataList.map(item => {
+          const blobName = item.blobName || item.name
+          const blobInfo = blobsMap.get(blobName) || {}
+          
+          return {
+            id: item.id,
+            name: blobName,
+            url: blobInfo.url || item.url,
+            title: item.title || blobInfo.metadata?.title || getImageNameWithoutExtension(blobName),
+            description: item.description || '',
+            tags: item.tags || [],
+            uploadedAt: item.timestamp || item.uploadedAt || blobInfo.properties?.createdOn,
+            size: item.size || blobInfo.properties?.contentLength || 0,
+            contentType: item.contentType || blobInfo.properties?.contentType || 'image/jpeg'
+          }
+        })
+        
+        // Sort by newest first
+        urls.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
+        
+        setImageUrls(urls)
+        
+        // Update statistics
+        const totalSize = urls.reduce((acc, item) => acc + (parseInt(item.size) || 0), 0)
+        setStats({
+          total: urls.length,
+          totalSize: formatFileSize(totalSize)
+        })
+        
+        // Track fetch completion in App Insights
+        const fetchDuration = Date.now() - fetchStart
+        appInsights.trackMetric({ name: "FetchImagesDuration", average: fetchDuration })
+        appInsights.trackEvent({ 
+          name: "FetchImagesCompleted", 
+          properties: { 
+            count: urls.length,
+            duration: fetchDuration
+          }
+        })
+      } else {
+        throw new Error(`Failed to fetch metadata: ${metadataResponse.statusText}`)
       }
-      setImageUrls(urls);  // set the urls array to the imageUrls state
     } catch (error) {
-      console.error(error);  // Handle error
+      console.error('Error fetching images:', error)
+      setError('Failed to fetch images. Please try again.')
+      appInsights.trackException({ exception: error })
+      
+      // Fallback to blob storage only
+      try {
+        const blobItems = containerClient.listBlobsFlat()
+        const urls = []
+        
+        for await (const blob of blobItems) {
+          const tempBlockBlobClient = containerClient.getBlockBlobClient(blob.name)
+          urls.push({ 
+            name: blob.name, 
+            url: tempBlockBlobClient.url,
+            title: blob.metadata?.title || getImageNameWithoutExtension(blob.name),
+            metadata: blob.metadata || {},
+            size: blob.properties?.contentLength || 0
+          })
+        }
+        
+        urls.sort((a, b) => {
+          const timeA = a.name.split('-')[0]
+          const timeB = b.name.split('-')[0]
+          return timeB - timeA
+        })
+        
+        setImageUrls(urls)
+        
+        // Update statistics for fallback
+        const totalSize = urls.reduce((acc, item) => acc + (parseInt(item.size) || 0), 0)
+        setStats({
+          total: urls.length,
+          totalSize: formatFileSize(totalSize)
+        })
+      } catch (fallbackError) {
+        console.error('Fallback error:', fallbackError)
+        appInsights.trackException({ exception: fallbackError })
+      }
     } finally {
-      setLoading(false);  // Turn off loading
+      setLoading(false)
     }
-  };
+  }, [account, sasToken, containerName, logicAppUrl])
 
-  //save an Image
+  // Upload image and send metadata
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!file) {  // check if the file is selected
-      alert('Please select an image to upload');
-      return;
+    e.preventDefault()
+    
+    if (!file) {
+      toast.warning('Please select an image to upload')
+      return
     }
-    if (!account || !sasToken || !containerName) {  // check if the credentials are set
-      alert('Please make sure you have set the Azure Storage credentials in the .env file');
-      return;
+    
+    if (!imageTitle.trim()) {
+      toast.warning('Please enter a title for your image')
+      return
     }
+    
+    if (!account || !sasToken || !containerName) {
+      toast.error('Azure Storage credentials missing')
+      return
+    }
+    
     try {
-      setLoading(true);
-      const blobName = `${new Date().getTime()}-${file.name}`; // Specify a default blob name if needed
-      const blobClient = containerClient.getBlockBlobClient(blobName);  // get the blob client
-      await blobClient.uploadData(file, { blobHTTPHeaders: { blobContentType: file.type } }); // upload the image
-      await fetchImages();   // fetch all images again after the upload is completed
-    } catch (error) {
-      console.error(error);  // Handle error
-    } finally {
-      setLoading(false); // Turn off loading
-    }
-  };
+      setLoading(true)
+      setError(null)
+      
+      // Create a unique blob name with timestamp
+      const blobName = `${Date.now()}-${file.name.replace(/\s+/g, '-')}`
+      const blobClient = containerClient.getBlockBlobClient(blobName)
+      
+      // Start tracking upload with App Insights
+      const uploadStart = Date.now()
+      appInsights.trackEvent({ 
+        name: "UploadStarted", 
+        properties: { 
+          fileName: file.name, 
+          fileSize: file.size,
+          fileType: file.type,
+          title: imageTitle
+        }
+      })
 
-  // delete an Image
+      // Prepare metadata for blob storage
+      const blobMetadata = {
+        title: imageTitle,
+        uploadedAt: new Date().toISOString()
+      }
+      
+      if (imageDescription) {
+        blobMetadata.description = imageDescription
+      }
+      
+      if (tags) {
+        blobMetadata.tags = tags
+      }
+
+      // Upload image to Blob Storage with metadata
+      await blobClient.uploadData(file, {
+        blobHTTPHeaders: { blobContentType: file.type },
+        metadata: blobMetadata
+      })
+      
+      // Track upload completion and duration
+      const uploadDuration = Date.now() - uploadStart
+      appInsights.trackEvent({ 
+        name: "UploadCompleted", 
+        properties: { 
+          fileName: file.name, 
+          duration: uploadDuration,
+          size: file.size
+        }
+      })
+
+      // Prepare tags as array
+      const tagArray = tags ? tags.split(',').map(tag => tag.trim()) : []
+
+      // Send metadata to Azure Logic App (connected to Cosmos DB)
+      const cosmosResponse = await fetch(logicAppUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          id: `image-${Date.now()}`,
+          blobName: blobName,
+          title: imageTitle,
+          description: imageDescription || '',
+          tags: tagArray,
+          url: blobClient.url,
+          contentType: file.type,
+          size: file.size,
+          timestamp: new Date().toISOString()
+        })
+      })
+      
+      if (!cosmosResponse.ok) {
+        console.warn('Metadata saved to blob but Cosmos DB storage failed')
+        appInsights.trackEvent({ 
+          name: "CosmosDBSaveFailed", 
+          properties: { statusCode: cosmosResponse.status }
+        })
+      }
+
+      toast.success('Image uploaded successfully!')
+      setFile(null)
+      setImageTitle('')
+      setImageDescription('')
+      setTags('')
+      await fetchImages()
+    } catch (error) {
+      console.error('Error uploading image:', error)
+      setError('Failed to upload image. Please try again.')
+      toast.error('Upload failed: ' + error.message)
+      appInsights.trackException({ exception: error })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Delete image
   const handleDelete = async (blobName) => {
-    if (!account || !sasToken || !containerName) {  // check if the credentials are set
-      alert('Please make sure you have set the Azure Storage credentials in the .env file'); return;
+    if (!confirm('Are you sure you want to delete this image?')) {
+      return
     }
+    
+    if (!account || !sasToken || !containerName) {
+      toast.error('Azure Storage credentials missing')
+      return
+    }
+    
     try {
-      setLoading(true);  // Turn on loading
-      const blobClient = containerClient.getBlockBlobClient(blobName); // get the blob client
-      await blobClient.delete(); // delete the blob
-      fetchImages(); // fetch all images again after the delete is completed
+      setLoading(true)
+      setError(null)
+      
+      // Track deletion with App Insights
+      appInsights.trackEvent({ name: "ImageDeleteStarted", properties: { blobName } })
+      
+      const blobClient = containerClient.getBlockBlobClient(blobName)
+      await blobClient.delete()
+      
+      // Also delete metadata from Cosmos DB via Logic App
+      const deleteResponse = await fetch(`${logicAppUrl}/delete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ blobName })
+      })
+      
+      if (!deleteResponse.ok) {
+        console.warn('Blob deleted but metadata deletion may have failed')
+        appInsights.trackEvent({ 
+          name: "MetadataDeleteFailed", 
+          properties: { statusCode: deleteResponse.status }
+        })
+      }
+      
+      appInsights.trackEvent({ name: "ImageDeleteCompleted" })
+      toast.success('Image deleted successfully')
+      await fetchImages()
     } catch (error) {
-      console.log(error) // Handle error
+      console.error('Error deleting image:', error)
+      setError('Failed to delete image. Please try again.')
+      toast.error('Delete failed: ' + error.message)
+      appInsights.trackException({ exception: error })
     } finally {
-      setLoading(false);  //
+      setLoading(false)
     }
-  };
+  }
+  
+  // View image details
+  const handleViewDetails = (image) => {
+    setSelectedImage(image)
+    setIsModalOpen(true)
+    appInsights.trackEvent({ name: "ViewImageDetails", properties: { imageId: image.id || image.name } })
+  }
+  
+  // Close modal
+  const closeModal = () => {
+    setIsModalOpen(false)
+    setSelectedImage(null)
+  }
+  
+  // Helper: Format file size
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
 
-  // fetch all images when the page loads
+  // Initial fetch
   useEffect(() => {
-    fetchImages();
-  }, [])
+    fetchImages()
+    
+    // Track page view with App Insights
+    appInsights.trackPageView({ name: "Image Gallery" })
+    
+    return () => {
+      // Clean up any resources if needed
+    }
+  }, [fetchImages])
 
-  // Helper function to get the image name without extension
+  // Helper: remove file extension
   const getImageNameWithoutExtension = (filename) => {
-    const dotIndex = filename.lastIndexOf('.');
-    return dotIndex !== -1 ? filename.slice(0, dotIndex) : filename;
-  };
+    const dotIndex = filename.lastIndexOf('.')
+    return dotIndex !== -1 ? filename.slice(0, dotIndex) : filename
+  }
+  
+  // Format date for display
+  const formatDate = (dateString) => {
+    try {
+      return new Date(dateString).toLocaleString()
+    } catch (e) {
+      return 'Unknown date'
+    }
+  }
+
   return (
     <div className="container">
       {loading && <Loading />}
-      <h2>📸 Image Gallery Azure Blob Storage 📸</h2><hr />
+      <ToastContainer position="top-right" autoClose={3000} />
+      
+      <header className="app-header">
+        <h1>📸 Azure Cloud Image Gallery 📸</h1>
+        <div className="gallery-stats">
+          <span>Total Images: {stats.total}</span>
+          <span>Total Size: {stats.totalSize}</span>
+        </div>
+      </header>
+      <hr />
+      
+      {error && <div className="error-message">{error}</div>}
+      
       <div className="row-form">
-        <form className='upload-form'>
+        <form className='upload-form' onSubmit={handleSubmit}>
           <div className='upload-form_display'>
-            {
-              file ? <img className="displayImg" src={URL.createObjectURL(file)} alt="no pic" />
-                : <img className="displayImg" src={Placeholder} alt="nopic" />
+            {file
+              ? <img className="displayImg" src={URL.createObjectURL(file)} alt="selected" />
+              : <img className="displayImg" src={Placeholder} alt="placeholder" />
             }
           </div>
+          
           <div className='upload-form_inputs'>
-            <label htmlFor="fileInput"><FaFileUpload /></label>
-            <input type="file" style={{ display: "none" }} id="fileInput" onChange={(e) => setFile(e.target.files[0])} />
-            <button type="submit" onClick={handleSubmit} >Upload</button>
+            <input
+              type="text"
+              placeholder="Enter image title (required)"
+              value={imageTitle}
+              onChange={(e) => setImageTitle(e.target.value)}
+              className="title-input"
+              required
+            />
+            
+            <textarea
+              placeholder="Image description (optional)"
+              value={imageDescription}
+              onChange={(e) => setImageDescription(e.target.value)}
+              className="description-input"
+            />
+            
+            <input
+              type="text"
+              placeholder="Tags (comma separated)"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              className="tags-input"
+            />
+            
+            <label htmlFor="fileInput" className="file-input-label">
+              <FaFileUpload /> Select Image
+            </label>
+            <input
+              type="file"
+              style={{ display: "none" }}
+              id="fileInput"
+              accept="image/*"
+              onChange={(e) => {
+                const selectedFile = e.target.files[0];
+                if (selectedFile) {
+                  if (selectedFile.size > 5 * 1024 * 1024) {
+                    toast.error('File size exceeds 5MB limit');
+                    appInsights.trackEvent({ name: "FileSizeExceeded", properties: { size: selectedFile.size } });
+                    return;
+                  }
+                  setFile(selectedFile);
+                  if (!imageTitle) {
+                    setImageTitle(getImageNameWithoutExtension(selectedFile.name));
+                  }
+                  appInsights.trackEvent({ name: "FileSelected", properties: { type: selectedFile.type, size: selectedFile.size } });
+                }
+              }}
+            />
+            
+            <button type="submit" className="upload-button" disabled={loading}>
+              Upload Image
+            </button>
           </div>
         </form>
       </div>
+
       <div className="row-display">
-        {imageUrls.length === 0 ? <h3>😐 No Images Found😐 </h3> : (
-          imageUrls && imageUrls.map((blobItem, index) => {
-            return (
-              <div key={index} className="card">
-                <img src={blobItem.url} alt="no pic" />
-                <h3 style={{ width: "90%" }}>{getImageNameWithoutExtension(blobItem.name)}</h3>
-                <button className="del" onClick={() => handleDelete(blobItem.name)} > <AiFillDelete /> </button>
+        {imageUrls.length === 0 ? (
+          <h3>😐 No Images Found 😐</h3>
+        ) : (
+          imageUrls.map((image, index) => (
+            <div key={index} className="card">
+              <img 
+                src={image.url} 
+                alt={image.title || getImageNameWithoutExtension(image.name)} 
+                loading="lazy" 
+                onClick={() => handleViewDetails(image)}
+              />
+              <h3>{image.title || getImageNameWithoutExtension(image.name)}</h3>
+              <div className="card-actions">
+                <button className="btn-info" onClick={() => handleViewDetails(image)} title="View details">
+                  <AiFillInfoCircle />
+                </button>
+                <button className="btn-delete" onClick={() => handleDelete(image.name)} title="Delete image">
+                  <AiFillDelete />
+                </button>
               </div>
-            )
-          })
+            </div>
+          ))
         )}
       </div>
+      
+      {/* Image Details Modal */}
+      {isModalOpen && selectedImage && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h2>{selectedImage.title}</h2>
+            <img src={selectedImage.url} alt={selectedImage.title} />
+            
+            <div className="image-details">
+              {selectedImage.description && (
+                <p><strong>Description:</strong> {selectedImage.description}</p>
+              )}
+              
+              {selectedImage.tags && selectedImage.tags.length > 0 && (
+                <p>
+                  <strong>Tags:</strong> {
+                    Array.isArray(selectedImage.tags) 
+                      ? selectedImage.tags.join(', ') 
+                      : selectedImage.tags
+                  }
+                </p>
+              )}
+              
+              <p><strong>Uploaded:</strong> {formatDate(selectedImage.uploadedAt)}</p>
+              <p><strong>Size:</strong> {formatFileSize(selectedImage.size)}</p>
+              <p><strong>Type:</strong> {selectedImage.contentType}</p>
+            </div>
+            
+            <button onClick={closeModal} className="modal-close">Close</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
