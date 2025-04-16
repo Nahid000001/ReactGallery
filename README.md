@@ -1,24 +1,43 @@
-﻿# Image Gallery Azure_Blob_storage Educator_Developer_Blog  Repository
-![Screenshot 2023-08-05 172736](https://github.com/kelcho-spense/Image_Gallery_Azure_Blob_storage-Educator_Developer_Blog-/assets/57180726/38761210-2d3f-4f48-b54f-d923c43b6773)
- 
-## What is Azure Blob Storage?
-Azure Blob Storage is a Microsoft Azure cloud-based object storage solution. It enables developers to use blobs to store and manage unstructured data such as documents, photos, videos, backups, and logs. Blobs can be grouped together to form containers, providing a scalable and cost-effective method for storing and retrieving massive amounts of data.
+﻿# Azure Cloud Image Gallery
 
-## Programming Languages for Consuming Azure Blob Storage
--	Users or client applications can access objects in Blob Storage via HTTP/HTTPS, from anywhere in the world. Objects in Blob Storage are accessible via the Azure Storage REST API, Azure PowerShell, Azure CLI, or an Azure Storage client library. Client libraries are available for different languages, including: 
--	JavaScript or (node.js): Utilize the Azure Storage Blob client library for JavaScript to interact with Blob Storage from web applications built with React.js or server frameworks.
--	C#(.Net): Use the Azure SDK for .NET to build .NET-based applications that interact with Blob Storage.
--	Python: The Azure SDK for Python enables Python developers to integrate Blob Storage functionality into their applications.
--	Java, Go, and more: Azure Blob Storage provides SDKs for multiple programming languages, enabling broad language support.
-## Pre-requisites
-1.	Azure subscription, if you’re a student redeem Azure for students else create a free account
-2.	Nodejs installed on your machine.
-3.	VS Code
-## Procedure
-1.	Provision Azure blob storage
-2.	Clone this repo.
-3.	change the values of .env variables to the values from your azure storage account.
-4.	npm install or yarn
-5.	view your live app at http://localhost:5173/
+A cloud-native application built using Microsoft Azure services for storing and managing images with metadata.
 
+## Features
 
+- Image upload with metadata support (title, description, tags)
+- Image viewing with detailed metadata display
+- Image deletion
+- Responsive design for all device sizes
+- Application monitoring with Azure Application Insights
+
+## Technologies Used
+
+- React.js for the frontend
+- Azure Blob Storage for image storage
+- Azure Cosmos DB for metadata storage
+- Azure Logic Apps for API endpoints
+- Azure Application Insights for monitoring and telemetry
+- Azure Static Web Apps for hosting
+- GitHub Actions for CI/CD
+
+## Setup Instructions
+
+1. Clone the repository
+2. Create an Azure Storage Account, Cosmos DB instance, and Logic Apps
+3. Update the `.env` file with your Azure credentials and endpoints
+4. Run `npm install` to install dependencies
+5. Run `npm run dev` to start the development server
+
+## Environment Variables
+
+Create a `.env` file with the following variables:
+VITE_STORAGE_ACCOUNT=yourstorageaccount
+VITE_STORAGE_CONTAINER=yourcontainername
+VITE_STORAGE_SAS=yoursastoken
+VITE_APPINSIGHTS_CONNECTION_STRING=your-app-insights-connection-string
+VITE_LOGIC_APP_URL=https://your-logic-app-url
+VITE_COSMOS_ENDPOINT=https://your-cosmos-account.documents.azure.com:443/
+VITE_COSMOS_KEY=your-cosmos-key
+VITE_COSMOS_DATABASE=your-database-name
+VITE_COSMOS_CONTAINER=your-container-name
+VITE_APP_INSIGHTS_KEY=your-app-insights-key

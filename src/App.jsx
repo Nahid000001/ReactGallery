@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import './App.css'
-import { AiFillDelete, AiFillEdit, AiFillInfoCircle } from 'react-icons/ai'
+import { AiFillDelete, AiFillInfoCircle } from 'react-icons/ai'
 import { FaFileUpload } from 'react-icons/fa'
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
@@ -385,7 +385,7 @@ const App = () => {
       <ToastContainer position="top-right" autoClose={3000} />
       
       <header className="app-header">
-        <h1>📸 Azure Cloud Image Gallery 📸</h1>
+        <h1>📸 Welcome to My Awesome React Gallery 📸</h1>
         <div className="gallery-stats">
           <span>Total Images: {stats.total}</span>
           <span>Total Size: {stats.totalSize}</span>
